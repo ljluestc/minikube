@@ -854,9 +854,6 @@ func validateVolcanoAddon(ctx context.Context, t *testing.T, profile string) {
 	if ContainerRuntime() == "crio" {
 		t.Skipf("skipping: crio not supported")
 	}
-	if KVMDriver() {
-		t.Skip("skipping: flaky on KVM driver: https://github.com/kubernetes/minikube/issues/23138")
-	}
 
 	volcanoNamespace := "volcano-system"
 
@@ -913,10 +910,28 @@ func validateVolcanoAddon(ctx context.Context, t *testing.T, profile string) {
 		t.Logf("vcjob creation with %s failed: %v", rr.Command(), err)
 	}
 
-	// Create a vcjob
-	rr, err = Run(t, exec.CommandContext(ctx, KubectlBinary(), "--context", profile, "create", "-f", filepath.Join(*testdataDir, "vcjob.yaml")))
+	// Create the queue first: the admission webhook rejects jobs submitted to a queue
+	// whose status is not Open yet, and the controller sets that status asynchronously.
+	rr, err = Run(t, exec.CommandContext(ctx, KubectlBinary(), "--context", profile, "create", "-f", filepath.Join(*testdataDir, "vcqueue.yaml")))
 	if err != nil {
-		t.Logf("vcjob creation with %s failed: %v", rr.Command(), err)
+		t.Fatalf("queue creation with %s failed: %v", rr.Command(), err)
+	}
+
+	rr, err = Run(t, exec.CommandContext(ctx, KubectlBinary(), "--context", profile, "wait", "--for=jsonpath={.status.state}=Open", "queue/test", "--timeout=2m"))
+	if err != nil {
+		t.Fatalf("failed waiting for queue to open with %s: %v", rr.Command(), err)
+	}
+
+	// Create a vcjob, retrying in case the admission webhook is not serving yet
+	createVcjob := func() error {
+		rr, err := Run(t, exec.CommandContext(ctx, KubectlBinary(), "--context", profile, "apply", "-f", filepath.Join(*testdataDir, "vcjob.yaml")))
+		if err != nil {
+			return fmt.Errorf("%v failed: %v: %s", rr.Command(), err, rr.Stderr)
+		}
+		return nil
+	}
+	if err := retry.Expo(createVcjob, time.Second*3, Minutes(2)); err != nil {
+		t.Fatalf("failed creating vcjob: %v", err)
 	}
 
 	want := "test-job"
