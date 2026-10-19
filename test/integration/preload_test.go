@@ -21,11 +21,13 @@ package integration
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"k8s.io/minikube/pkg/minikube/constants"
+	"k8s.io/minikube/pkg/minikube/download"
 )
 
 // TestPreload verifies that disabling the initial preload, pulling a specific image,
@@ -99,17 +101,15 @@ func TestPreload(t *testing.T) {
 			source            string
 			kubernetesVersion string // using versions that are not used in the test to make sure they dont pre-exist
 			wantLog           string
+			cached            bool // expects the tarball cached by a previous subtest
 		}{
-			{"gcs", "gcs", "v1.34.0-rc.1", "Downloading preload from https://storage.googleapis.com"},
-			{"github", "github", "v1.34.0-rc.2", "Downloading preload from https://github.com"},
-			{"gcs-cached", "gcs", "v1.34.0-rc.2", "in cache, skipping download"},
+			{"gcs", "gcs", "v1.34.0-rc.1", "Downloading preload from https://storage.googleapis.com", false},
+			{"github", "github", "v1.34.0-rc.2", "Downloading preload from https://github.com", false},
+			{"gcs-cached", "gcs", "v1.34.0-rc.2", "in cache, skipping download", true},
 		}
 
 		for _, tc := range tests {
 			t.Run(tc.name, func(t *testing.T) {
-				if tc.name == "gcs-cached" && DockerDriver() {
-					t.Skip("skipping: flaky on Docker driver: https://github.com/kubernetes/minikube/issues/23164")
-				}
 				profile := UniqueProfileName("test-preload-dl-" + tc.name)
 				ctx, cancel := context.WithTimeout(context.Background(), Minutes(10))
 				defer CleanupWithLogs(t, profile, cancel)
@@ -117,12 +117,34 @@ func TestPreload(t *testing.T) {
 				startArgs := []string{"start", "-p", profile, "--download-only", "--kubernetes-version", tc.kubernetesVersion, fmt.Sprintf("--preload-source=%s", tc.source), "--alsologtostderr", "--v=1"}
 				startArgs = append(startArgs, StartArgs()...)
 
-				rr, err := Run(t, exec.CommandContext(ctx, Target(), startArgs...))
-				if err != nil {
-					t.Fatalf("%s failed: %v", rr.Command(), err)
+				tarball := download.TarballPath(tc.kubernetesVersion, ContainerRuntime())
+				inCache := func() bool {
+					fi, err := os.Stat(tarball)
+					return err == nil && fi.Size() > 0
 				}
-				if !strings.Contains(rr.Output(), tc.wantLog) {
-					t.Fatalf("Expected to find %q in output, but got:\n%s", tc.wantLog, rr.Output())
+				if tc.cached && !inCache() {
+					t.Fatalf("expected %q to be cached by a previous subtest, but it is missing", tarball)
+				}
+
+				// A failed preload download is only logged as a warning and start --download-only
+				// still succeeds, so make sure the tarball really landed in the cache, retrying
+				// transient download failures: gcs-cached relies on the tarball cached by github.
+				const maxAttempts = 3
+				for attempt := 1; ; attempt++ {
+					rr, err := Run(t, exec.CommandContext(ctx, Target(), startArgs...))
+					if err != nil {
+						t.Fatalf("%s failed: %v", rr.Command(), err)
+					}
+					if !strings.Contains(rr.Output(), tc.wantLog) {
+						t.Fatalf("Expected to find %q in output, but got:\n%s", tc.wantLog, rr.Output())
+					}
+					if inCache() {
+						break
+					}
+					if attempt == maxAttempts {
+						t.Fatalf("expected %q to be cached after %d attempts, but it is missing. last output:\n%s", tarball, attempt, rr.Output())
+					}
+					t.Logf("%q was not cached after attempt %d, retrying", tarball, attempt)
 				}
 			})
 		}
