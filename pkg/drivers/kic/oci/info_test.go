@@ -17,6 +17,7 @@ limitations under the License.
 package oci
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -36,6 +37,7 @@ func TestDockerSystemInfo(t *testing.T) {
 		OS            string
 		Swarm         bool
 		StorageDriver string
+		Mirrors       []string
 	}{
 		{
 			Name:          "linux_docker",
@@ -47,6 +49,18 @@ func TestDockerSystemInfo(t *testing.T) {
 			OS:            "linux",
 			Swarm:         false,
 			StorageDriver: "overlay2",
+		},
+		{
+			Name:          "linux_docker_registry_mirror",
+			OciBin:        "docker",
+			RawJSON:       `{"ID":"7PYP:53DU:MLWX:EDQG:YG2Y:UJLB:J7SD:4SAI:XF2Y:N2MR:MU53:DR3N","Containers":3,"ContainersRunning":1,"ContainersPaused":0,"ContainersStopped":2,"Images":76,"Driver":"overlay2","DriverStatus":[["Backing Filesystem","extfs"],["Supports d_type","true"],["Native Overlay Diff","true"]],"SystemStatus":null,"Plugins":{"Volume":["local"],"Network":["bridge","host","macvlan","null","overlay"],"Authorization":null,"Log":["awslogs","fluentd","gcplogs","gelf","journald","json-file","local","logentries","splunk","syslog"]},"MemoryLimit":true,"SwapLimit":false,"KernelMemory":true,"KernelMemoryTCP":false,"CpuCfsPeriod":true,"CpuCfsQuota":true,"CPUShares":true,"CPUSet":true,"PidsLimit":false,"IPv4Forwarding":true,"BridgeNfIptables":true,"BridgeNfIp6tables":true,"Debug":false,"NFd":27,"OomKillDisable":true,"NGoroutines":48,"SystemTime":"2020-08-11T18:16:17.494440681Z","LoggingDriver":"json-file","CgroupDriver":"cgroupfs","NEventsListener":0,"KernelVersion":"4.9.0-8-amd64","OperatingSystem":"Debian GNU/Linux 9 (stretch)","OSType":"linux","Architecture":"x86_64","IndexServerAddress":"https://index.docker.io/v1/","RegistryConfig":{"AllowNondistributableArtifactsCIDRs":[],"AllowNondistributableArtifactsHostnames":[],"InsecureRegistryCIDRs":["127.0.0.0/8"],"IndexConfigs":{"docker.io":{"Name":"docker.io","Mirrors":["https://us-mirror.gcr.io/"],"Secure":true,"Official":true}},"Mirrors":["https://us-mirror.gcr.io/"]},"NCPU":16,"MemTotal":63336071168,"GenericResources":null,"DockerRootDir":"/var/lib/docker","HttpProxy":"","HttpsProxy":"","NoProxy":"","Name":"image-builder-cloud-shell-v20200811-102837","Labels":[],"ExperimentalBuild":false,"ServerVersion":"18.09.0","ClusterStore":"","ClusterAdvertise":"","Runtimes":{"runc":{"path":"runc"}},"DefaultRuntime":"runc","Swarm":{"NodeID":"","NodeAddr":"","LocalNodeState":"inactive","ControlAvailable":false,"Error":"","RemoteManagers":null},"LiveRestoreEnabled":false,"Isolation":"","InitBinary":"docker-init","ContainerdCommit":{"ID":"7ad184331fa3e55e52b890ea95e65ba581ae3429","Expected":"7ad184331fa3e55e52b890ea95e65ba581ae3429"},"RuncCommit":{"ID":"dc9208a3303feef5b3839f4323d9beb36df0a9dd","Expected":"dc9208a3303feef5b3839f4323d9beb36df0a9dd"},"InitCommit":{"ID":"fec3683","Expected":"fec3683"},"SecurityOptions":["name=seccomp,profile=default"],"ProductLicense":"Community Engine","Warnings":["WARNING: No swap limit support"],"ClientInfo":{"Debug":false,"Plugins":[],"Warnings":null}}`,
+			ShouldError:   false,
+			CPUs:          16,
+			Memory:        63336071168,
+			OS:            "linux",
+			Swarm:         false,
+			StorageDriver: "overlay2",
+			Mirrors:       []string{"https://us-mirror.gcr.io/"},
 		},
 		{
 			Name:   "macos_docker",
@@ -177,6 +191,9 @@ func TestDockerSystemInfo(t *testing.T) {
 			}
 			if s.Swarm != tc.Swarm {
 				t.Errorf("Expected Swarm to be %t but got %t", tc.Swarm, s.Swarm)
+			}
+			if !slices.Equal(s.RegistryMirrors, tc.Mirrors) {
+				t.Errorf("Expected RegistryMirrors to be %v but got %v", tc.Mirrors, s.RegistryMirrors)
 			}
 
 		})

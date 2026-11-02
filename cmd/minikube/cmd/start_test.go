@@ -911,3 +911,32 @@ func TestGetContainerRuntime(t *testing.T) {
 		})
 	}
 }
+
+func TestUsableHostRegistryMirrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  []string
+		expect []string
+	}{
+		{name: "none", input: nil, expect: nil},
+		{name: "trailing slash is trimmed", input: []string{"https://us-mirror.gcr.io/"}, expect: []string{"https://us-mirror.gcr.io"}},
+		{name: "port is kept", input: []string{"http://192.168.1.10:5000/"}, expect: []string{"http://192.168.1.10:5000"}},
+		{name: "localhost is skipped", input: []string{"http://localhost:5000/", "http://LOCALHOST:5000"}, expect: nil},
+		{name: "loopback ip is skipped", input: []string{"http://127.0.0.1:5000/", "http://[::1]:5000/"}, expect: nil},
+		{name: "invalid entries are skipped", input: []string{"mirror.gcr.io", "ftp://mirror.gcr.io", "https://mirror.gcr.io/path/", "https://"}, expect: nil},
+		{name: "duplicates are removed", input: []string{"https://mirror.gcr.io/", "https://mirror.gcr.io"}, expect: []string{"https://mirror.gcr.io"}},
+		{
+			name:   "mixed",
+			input:  []string{"https://mirror.gcr.io/", "http://localhost:5000/", "https://registry.example.com:8443/"},
+			expect: []string{"https://mirror.gcr.io", "https://registry.example.com:8443"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := usableHostRegistryMirrors(tc.input)
+			if !slices.Equal(got, tc.expect) {
+				t.Errorf("usableHostRegistryMirrors(%v) = %v, want %v", tc.input, got, tc.expect)
+			}
+		})
+	}
+}

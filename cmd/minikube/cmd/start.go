@@ -321,6 +321,7 @@ func provisionWithDriver(cmd *cobra.Command, ds registry.DriverState, existing *
 
 	virtualBoxMacOS13PlusWarning(driverName)
 	hyperkitDeprecationWarning(driverName)
+	autoSetRegistryMirror(cmd, driverName, existing)
 	validateFlags(cmd, driverName, existing)
 	validateUser(driverName)
 	if driverName == oci.Docker {
@@ -1635,6 +1636,63 @@ func validateRegistryMirror() {
 
 		}
 	}
+}
+
+// autoSetRegistryMirror inherits the registry mirrors of the host docker daemon
+// when creating a new cluster with the docker driver and docker container runtime,
+// unless the user has explicitly supplied --registry-mirror (or MINIKUBE_REGISTRY_MIRROR).
+func autoSetRegistryMirror(cmd *cobra.Command, drvName string, existing *config.ClusterConfig) {
+	// registry mirrors of an existing cluster are never updated, see updateExistingConfigFromFlags
+	if existing != nil || drvName != oci.Docker {
+		return
+	}
+	if cmd.Flags().Changed("registry-mirror") || len(registryMirror) > 0 {
+		return
+	}
+	if getContainerRuntime(existing) != constants.Docker {
+		return
+	}
+	si, err := oci.CachedDaemonInfo(oci.Docker)
+	if err != nil {
+		klog.Warningf("unable to get docker daemon info to detect registry mirrors: %v", err)
+		return
+	}
+	mirrors := usableHostRegistryMirrors(si.RegistryMirrors)
+	if len(mirrors) == 0 {
+		return
+	}
+	registryMirror = mirrors
+	klog.Infof("auto set registry-mirror to %v from host docker daemon", mirrors)
+	out.Styled(style.Option, "Using registry mirrors configured in the host docker daemon: {{.mirrors}}", out.V{"mirrors": strings.Join(mirrors, ", ")})
+}
+
+// usableHostRegistryMirrors normalizes the registry mirrors reported by the host docker daemon
+// and drops the ones that are invalid for --registry-mirror or unreachable from inside the minikube node.
+func usableHostRegistryMirrors(hostMirrors []string) []string {
+	var mirrors []string
+	for _, m := range hostMirrors {
+		// docker info reports mirrors with a trailing slash (https://mirror.gcr.io/)
+		m = strings.TrimRight(strings.TrimSpace(m), "/")
+		u, err := url.Parse(m)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" {
+			klog.Infof("skipping host registry mirror %q: not a valid registry mirror url", m)
+			continue
+		}
+		// loopback addresses of the host are not reachable from inside the node container
+		host := u.Hostname()
+		if strings.EqualFold(host, "localhost") {
+			klog.Infof("skipping host registry mirror %q: loopback address", m)
+			continue
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			klog.Infof("skipping host registry mirror %q: loopback address", m)
+			continue
+		}
+		if !slices.Contains(mirrors, m) {
+			mirrors = append(mirrors, m)
+		}
+	}
+	return mirrors
 }
 
 // This function validates if the --image-repository
